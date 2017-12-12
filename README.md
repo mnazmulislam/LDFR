@@ -1,12 +1,6 @@
 
-
-############################################################################################################
-
   title : Description of the required functions for fitting "Longitudinal dynamic functional regression" (LDFR)
    date : 2017/11
-
-############################################################################################################
-
 
 1. data generator.R : 
 
