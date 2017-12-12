@@ -1,5 +1,5 @@
 
-title : Description of the required functions for fitting "Longitudinal dynamic functional regression" (LDFR)
+Title : Description of the required functions for fitting "Longitudinal dynamic functional regression" (LDFR)
 
 1. data generator.R : 
  mufun() : defines true mean function
