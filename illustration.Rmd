@@ -1,0 +1,411 @@
+---
+title: Illustration of "Longitudinal dynamic functional regression" (LDFR)
+author: Md Nazmul Islam, Ana-Maria Staicu, and Eric van Heugten
+output: html_document
+date: 2017/11
+---
+
+
+```{r}
+source("LDFR.R")
+source("data generator.R")
+source("data fit.R")
+x <- c("mgcv", "MASS", "ggplot2", "refund", "RColorBrewer", "reshape2", "stats", "astsa", "Matrix")
+suppressMessages(unlist(lapply(x, require, character.only = TRUE)))
+```
+
+Defining inputs for a single case
+
+```{r param}
+tmin <- 0                # minimum timepoint                              
+tmax <- 1                # maximum timepoint
+rng <- tmax - tmin       # range of timepoints
+TT <- seq(tmin, tmax, length.out = 41)    #  41 equidistant timepoints
+I <- 150                 #  number of existing subjects
+IW <- 250                #  number of existing + new subjects; new subjects = IW - I
+J<- length(TT)           #  length of TT
+g <- seq(0, 100, 1)      #  grid points        
+ss <- g / 100            #  vector of equidistant points                
+SS <- length(ss)         #  length of ss
+minJi <- 21              #  minimum number of repeated observations per subject
+maxJi <- 25              #  maximum number of repeated observations per subject
+mm <- 5                  #  number of repeated observations per subject in test set
+delta <- 5               #  intensity at which predictor evolves over time
+simul <- 1               #  desired number of Monte carlo simulations 
+nbf <- 15                #  number of knots
+zetamu <- 0              #  mean of the variables used in representing true covariate                   
+zetasigma1 <- 3.5        #  variance of the first gaussian variable
+zetasigma2 <- 2          #  variance of the second gaussian variable 
+zetasigma3 <- 3          #  variance of the third gaussian variable 
+zetasigma4 <- 1.5        #  variance of the fourth gaussian variable 
+mu.e.x1 <- 0             #  mean of the first noisy term 
+mu.e.x2 <- 0             #  mean of the second noisy term 
+mu.e.x3 <- 0             #  mean of the third noisy term 
+var.e.x1 <- 0.3          #  variance the first smooth noise term 
+var.e.x2 <- 0.7          #  variance the second smooth noise term 
+var.e.x3 <- NULL         #  variance the third noise (white noise) term by SNR 
+errYbi0mu <- 0           #  mean of random intercept
+errYbijmu <- 0           #  mean of random slope
+errYbi1mu <- 0           #  mean of white noise term
+errYbi0sigma <- 1        #  variance of random intercept
+errYbi1sigma <- 0.5      #  variance of random slope
+errYbi12sigma <- 0.1     #  covariance between random intercept and slope
+errYbijsigma <- 0.5      #  variance of white noise term
+method <- "REML"         #  method to select smoothing parameter 
+Yerror <- "CS"           #  random-intercept used for defining covariance structure of response (compound symmetric)
+full_traj <- TRUE        #  TRUE as full trajectory is desired
+pred_interval <- TRUE    #  TRUE as prediction interval for response trajectory is needed
+alpha <- 0.05            #  nominal level of significance
+Cov_Error <- "High SNR"  #  low noise variance and high signal
+pve <- 0.95              #  pre-specified percentage of variance explained to select truncation value
+new_subj <- TRUE         # TRUE as prediction for new subjects is desired
+phi1 <- sqrt(2) * cos(2 * pi * ss)          
+phi2 <- sqrt(2) * sin(2 * pi * ss)     
+true.beta1  <- exp(- TT * delta)   
+true.beta2 <- delta * TT * sin (delta * TT)
+phi <- cbind(phi1, phi2) 
+bet <-  cbind(true.beta1, true.beta2)
+gammaT <- phi %*% t(bet) # true functional coefficient
+```
+
+Apply function to generate a dataset and fit LDFR model.
+
+```{r apply}
+hh0 <- seq (1,9999999 , I + 13)
+set.seed(1331)
+seednum0 <- sample(hh0, simul, replace = F)
+gf <- lapply(seednum0 , function(dd) try(Yestim(A = dd, I, IW, TT, ss, zetamu, zetasigma1, 
+        zetasigma2, zetasigma3, zetasigma4, delta, minJi, maxJi, Cov_Error, mu.e.x1, mu.e.x2, 
+        mu.e.x3, var.e.x1, var.e.x2, var.e.x3, errYbi0mu, errYbijmu, errYbi0sigma, errYbijsigma, 
+        errYbi1mu, errYbi1sigma, errYbi12sigma, mm, J, Yerror, nbf, method, pve, full_traj, 
+        pred_interval, alpha, new_subj)))
+```
+
+## Observed data
+```{r}
+par(mfrow = c(1, 1))
+set.seed(1177)
+n <- sample(seq_len(I), 1)
+Y <- gf[[1]]$fit$Y
+fpr <- gf[[1]]$fit$fpr
+ID <- gf[[1]]$fit$ID_obs
+lty <- rep(1, length(which(ID == n)))
+plot(Y[which(ID == n)], type = "b", col = "navyblue", ylim = c(-15, 25),ylab = "Yield", 
+     xlab = expression(n[i]), lwd = 2, axes = TRUE, cex.lab = 1, cex.axis = 1, cex.main = 1, 
+     main = paste("Response for subject : ", ID[which(ID==n)][1]))
+matplot(ss, t(fpr[which(ID == n),]), type ="l", lty = 1, col = "grey",main = 
+        paste("Observed profiles for subject : ", ID[which(ID == n)][1], "", sep = ""),
+        cex.main = 1, cex.lab = 1, cex.axis = 1, lwd = 2, ylab = "", xlab = "Grid (s)", ylim = c(-6, 20))
+matlines(ss, t(fpr[c(8,17,2),]), type ="l", lwd = 2, lty = 1, col = c("black", "green", "magenta"))
+```
+
+## Smooth functional predictors
+
+```{r smooth}
+zetaw.hat <- gf[[1]]$fit$zetaw_hat
+K.hat <- gf[[1]]$fit$Fnp
+phi.hat <- gf[[1]]$fit$phi 
+Mean <- gf[[1]]$fit$Mean
+
+AS <- list(); BS <- list()
+set.seed(1)
+k <- sample(seq_len(I), 3)
+
+for (sb in 1:length(k)){
+  for (ui in 1 : length(which(ID == k[sb]))) { 
+    AS[[ui]] <- zetaw.hat[which(ID == k[sb])[ui], 1] * phi.hat[,1] +
+      zetaw.hat[which(ID == k[sb])[ui], 2] * phi.hat[,2] +
+      zetaw.hat[which(ID == k[sb])[ui], 3] * phi.hat[,3]
+      BS[[ui]] <- AS[[ui]] + Mean[which(ID == k[sb])[ui],] 
+  }
+  dd2 <- t(as.matrix(do.call(cbind, lapply(BS, function(a) a))))
+  par(mfrow = c(1, 1))
+  matplot(ss, t(fpr[which(ID == k[sb]),]), type = "l",
+          main = paste("Observed profiles for subject : ", ID[which(ID == k[sb])][1], "", sep = ""),
+          cex.main = 1, cex.lab = 1, cex.axis = 1, lwd = 1.5, lty = 1, ylab = "", xlab = "Grid (s)", 
+          col = "grey", ylim = c(-6, 20))
+  matlines(ss, t(fpr[which(ID == k[sb])[c(3, 9, 5)],]), 
+           lty = c(2, 2, 2), col = c("black", "red", "purple"), lwd = 2)       
+  matlines(ss, t(dd2[c(3, 9, 5),]), lty =c(1, 1, 1), col = c("black", "red","purple"), lwd = 2)       
+  legend(-0, 18, inset = 1, legend = c("observed", "smooth"), lty = c(2, 1), 
+         cex = 1, horiz = FALSE, bty = "n")
+}
+```
+
+
+# Estimates of the covariates related components
+
+## Empirical basis functions
+
+```{r plotbasis}
+freq <- gf[[1]]$fit$freq
+par(mfrow = c(1, 1))
+plot(ss, phi.hat[, 1], type ="l", col = 1, main = expression(hat(phi)[1](s)), 
+     xlab = "Grid (s)", lwd = 2, ylim = c(-2,2), ylab = "")
+plot(ss, phi.hat[, 2], type ="l", col = 2, main = expression(hat(phi)[2](s)), 
+     xlab = "Grid (s)", lwd = 2,  ylim = c(-2,2), ylab = "")
+plot(ss, phi.hat[, 3], type ="l", col = 3, main = expression(hat(phi)[3](s)), 
+     xlab = "Grid (s)", lwd = 2,  ylim = c(-2,2), ylab = "")
+```
+
+
+## Estimated basis-coefficients 
+
+
+```{r plotxi}
+xiF <- gf[[1]]$fit$xiF
+fID <- gf[[1]]$fit$ID_full
+par(mfrow = c(1,1))
+for ( i in 1 : K.hat){
+  if(i == 1) Main = expression(hat(xi)[1](t))
+  if(i == 2) Main = expression(hat(xi)[2](t))
+  if(i == 3) Main = expression(hat(xi)[3](t))
+  plot(x = TT, xiF[which(fID == 1), i], type = "l",  lwd = 2, 
+       ylab = "", xlab = "Longitudinal time (t)", main = Main,
+       col = "grey", ylim = c(-6, 6))
+  for (ii in 2 : I){
+    lines(x = TT, xiF[which(fID == ii),i], type ="l",  lwd = 2, 
+          ylab = "", xlab = "", col = "grey", ylim = c(-6,6))
+  }
+  lines(x = TT, xiF[which(fID == 11), i], type ="l",  lwd = 2, col = "blue")
+  lines(x = TT, xiF[which(fID == 35), i], type ="l",  lwd = 2, col = "magenta")
+  lines(x = TT, xiF[which(fID == 46), i], type ="l",  lwd = 2, col = "red")
+  legend(0.6, -3, inset = 1, legend = c("subject 11", "subject 35", "subject 46"), 
+         fill = c("blue", "magenta", "red"), cex = 1, horiz = FALSE, bty = "n")
+}
+```
+
+
+# Fit assessment
+
+## In-sample and out-of-sample prediction error
+
+```{r plotIN}
+a <- c(gf[[1]]$IN.MPE.y, gf[[1]]$OUT.MPE.y)
+barplot(a, names.arg=c("in-sample", "out-of-sample"), xlab = "", ylim = c(0, 2),
+        col = c("violetred3", "chocolate4"), main = "Root Mean Prediction Errors",
+        cex.names = 1.4, cex.axis = 1.5, space = 1.5)
+print(a)
+```
+
+## Prediction of full trajectory for randomly selected 10 subjects
+
+```{r plotF}
+set.seed(7777)
+idN <- sample(seq_len(I), 10);
+V <-   gf[[1]]$fit$V
+Y <- gf[[1]]$fit$Y
+pred <- gf[[1]]$fit$pred
+f_pred <- gf[[1]]$fit$full_pred_obs
+boundYF <- gf[[1]]$fit$boundYF
+boundXF <- gf[[1]]$fit$boundXF
+IDF <- unlist(lapply(seq_len(I), function(gh) rep(gh, J)))
+TijF <- rep(TT, I)
+
+par(mfrow = c(1, 1))
+for(f in 1 : length(idN)) {
+  dayT <- seq_len(J)
+  nw <- V[which(ID == idN[f])] 
+  dayT[-nw] <- 1000
+  plot(x = TT, y = f_pred[which(IDF == idN[f])], type = "b", ylab = "Yield", xlab = 
+         "Longitudinal time (t)", lwd = 2, cex.lab = 1, pch = ifelse (dayT == 1000, 21, 1),
+         cex = ifelse(dayT == 1000, 1.4, 1), bg = "orange", ylim = c(-20, 20), main = 
+         paste("Subject:", idN[f], ""))
+  polygon(c(TT, rev(TT)), c(boundYF[which(IDF == idN[f]), 1], 
+          rev(boundYF[which(IDF == idN[f]), 2])), col = 'grey80', border = NA) 
+  lines(x = TT, y = f_pred[which(IDF == idN[f])], type = "b", lwd = 2, cex.lab = 1, 
+        pch = ifelse (dayT == 1000, 21, 1), cex = ifelse(dayT == 1000, 1.4, 1), 
+        bg = "orange")
+  A1 <- rep(NA, J)
+  A1[V[which(ID == idN[f])]] <- Y[which(ID == idN[f])] 
+  lines(x = TT, A1, type = "b",  lwd = 2, col = "red")  
+  legend(0, -8, inset = 1, legend = c("predicted", "observed", "recovered", "95% prediction band"), 
+         fill = c("white", "red", "orange", "grey"), border = c("black", "red", "black", "grey"), 
+         cex = 1, horiz = FALSE, bty = "n")
+}
+```
+
+## Prediction coverage and length of prediction band
+
+```{r}
+cvs <- cbind(boundYF[,1], gf[[1]]$YijF, boundYF[,2])  
+cvsx <- cbind(boundXF[,1], gf[[1]]$Yij.XF, boundXF[,2])
+ali <- alix <- list()
+find_cov <- function(XX){
+  if(XX[2] <= XX[3] & XX[2] >= XX[1]) {
+    ind = 1
+  } else {
+    ind = 0
+  }
+  ind
+}
+for(i in 1 : I){
+  inx <- which(IDF == i)
+  ali[[i]] <- unlist(lapply(seq_len(length(inx)), function(jj) find_cov(cvs[inx,][jj,]))) 
+}  
+IDXF <- unlist(lapply(seq_len(IW), function(gh) rep(gh, J)))
+IDXF <- IDXF[which(IDXF > I)]
+for(i in 1 : (IW - I)){
+  inx <- which(IDXF == unique(IDXF)[i])
+  alix[[i]] <- unlist(lapply(seq_len(length(inx)), function(jj) find_cov(cvsx[inx,][jj,]))) 
+}
+cov95 <- sum(unlist(ali)) / length(IDF)
+L95 <- mean(boundYF[, 2] - boundYF[, 1])
+cov95X <- sum(unlist(alix)) / length(IDXF)
+L95X <- mean(boundXF[, 2] - boundXF[, 1])
+b <- c(cov95, cov95X)
+barplot(b, names.arg = c("Existing subject", "New subject"), xlab = "", ylim = c(0, 1),
+    col = c("black", "grey"), cex.names = 1.4, cex.axis = 1.5, space = 1.5, 
+    main = paste0("Coverage probability at nominal level 0.05"))
+abline(h = 0.95, col = "Red", lwd = 2)
+print(b)
+e <- c(L95, L95X)
+barplot(e, names.arg = c("Existing subject", "New subject"), xlab = "", ylim = c(0, 7),
+        col = c("black", "grey"), main = "Average length of prediction band",
+        cex.names = 1.4, cex.axis = 1.5, space = 1.5)
+print(e)
+```
+
+## Prediction error of full response trajectory
+
+```{r plotRMPE}
+b <- c(gf[[1]]$RMPE_trj, gf[[1]]$RMPE_trjX)
+barplot(b, names.arg=c("Existing subject", "New subject"), xlab = "", ylim = c(0, 2),
+        col = c("violetred3", "chocolate4"), main = "RMPE_traj",
+        cex.names = 1.4, cex.axis = 1.5, space = 1.5)
+print(b)
+```
+
+## Model selection criteria
+
+```{r model}
+gf[[1]]$fit$model_adeq
+```
+
+## Checking the validity of Gaussian assumption
+
+```{r resd}
+resd <- Y - pred
+par(mfrow = c(1, 1))
+hist(resd, prob = TRUE, main = "Histogram", xlab = "Residuals", 
+     ylab = "Probability", ylim = c(0, 0.7), cex.lab = 2)
+qqnorm(resd, main = "Normal Q-Q plot for residuals")
+qqline(resd, lwd = 2)
+
+plot(pred, resd, xlab = "Predicted", ylab = "Marginal residuals", pch = 1, 
+     cex.lab = 1, cex.axis = 1, ylim = c(-7, 7), xlim = c(-15, 30))
+abline(h = 0,lwd = 2)
+lines(smooth.spline(pred, resd), col = "red", lwd = 2)
+```
+
+# Estimates of response related components 
+## Estiamtes of dynamic parameters $\widehat\beta_{k}(t)$
+
+```{r}
+beta <- gf[[1]]$fit$beta
+bounds <- gf[[1]]$fit$bounds
+
+for (bb in 1 : K.hat) {
+  if(bb == 1) Main = expression(hat(beta)[1](t))
+  if(bb == 2) Main = expression(hat(beta)[2](t))
+  if(bb == 3) Main = expression(hat(beta)[3](t))
+  lb <- min(beta[[bb]]) - 1; ub <- max(beta[[bb]]) + 1
+  plot(x = TT, y = beta[[bb]], type = "b", ylab = "", xlab = "Longitudinal time (t)", 
+       col = "black", main = Main, lwd = 2, pch = 1, axes = TRUE, cex.lab = 1.3, 
+       cex.axis = 1.3, cex.main = 1.4, ylim = c(lb, ub) )
+  polygon(c(TT, rev(TT)), c(bounds[[bb]][, 1], rev(bounds[[bb]][, 2])), 
+          col = 'grey80', border = NA) 
+  lines(x = TT, y = beta[[bb]], type = "b",  col = "black", lwd = 2, pch = 1)
+}
+```
+
+## Predicted random effect $\widehat b_{i}$
+
+```{r random}
+if(Yerror == "CS"){
+  rand_inter <- gf[[1]]$fit$SS_int
+  Estimates <- as.vector( c(rand_inter) )
+  Terms <- as.character(c(rep("intercept", I)))
+  mrg <- data.frame(as.matrix(as.data.frame(cbind(Estimates, Terms))))    
+  mrg$Estimates <- as.numeric(mrg$Estimates)
+  mrg$Terms <- as.factor(mrg$Terms)
+  mrg$Estimates <- Estimates
+  tb0 <- expression(""~hat(b)[i0])
+  ggplot(mrg, aes(x = Terms, y = Estimates)) + theme_bw() + theme(text = element_text(size = 17)) +
+    geom_boxplot(outlier.shape=NA) + geom_jitter(position=position_jitter(width=.1, height = 0)) +
+    annotate("text", x = 1, y = 3.5, parse = T, label = as.character(tb0), size = 6)
+}
+if(Yerror == "IS"){
+rand_inter <- gf[[1]]$fit$SS_int
+rand_slp <- gf[[1]]$fit$SS_slp
+Estimates <- as.vector( c(rand_inter, rand_slp) )
+Terms <- as.character(c(rep("intercept", I), rep("slope", I)))
+mrg <- data.frame(as.matrix(as.data.frame(cbind(Estimates, Terms))))    
+mrg$Estimates <- as.numeric(mrg$Estimates)
+mrg$Terms <- as.factor(mrg$Terms)
+mrg$Estimates <- Estimates
+tb0 <- expression(""~hat(b)[i0])
+tb1 <- expression(""~hat(b)[i1])
+ggplot(mrg, aes(x = Terms, y = Estimates)) + theme_bw() + theme(text = element_text(size = 17)) +
+  geom_boxplot(outlier.shape=NA) + geom_jitter(position=position_jitter(width=.1, height = 0)) +
+  annotate("text", x = 1, y = 3.5, parse = T, label = as.character(tb0), size = 6) +
+  annotate("text", x = 2, y = 3.5, parse = T, label = as.character(tb1), size = 6)
+}
+```
+       
+
+## True functional coefficient $\gamma(s,t)$
+
+
+```{r gammaT}
+gamma <- gammaT
+Functional_hours <- paste0("s_", 1 : SS)
+Longitudinal_time <- paste0("t_", 1 : J)
+sq <- Functional_hours[seq(1,length(Functional_hours), 10)]
+sq2 <- Longitudinal_time[seq(1,length(Longitudinal_time), 5)]
+Longitudinal_time <-  paste0("t_", 1 : J)
+rownames(gamma) <- Functional_hours[1 : dim(gamma)[1]]   
+colnames(gamma) <- Longitudinal_time[1 : dim(gamma)[2]]   
+longData <- melt(gamma)
+names(longData) <- c("Functional_hours", "Longitudinal_time",  "value")
+longData$Longitudinal_time <- factor(longData$Longitudinal_time)
+longData$Functional_hours <- factor(longData$Functional_hours)
+myPalette <- colorRampPalette(brewer.pal(11, "Spectral"), space="rgb", bias = 1)
+zp1 <- ggplot(longData, aes(y = Functional_hours, x = Longitudinal_time, fill = value))
+zp1 <- zp1 + theme(text = element_text(size = 15), axis.text.x = 
+    element_text(size = 15, angle=0), axis.text.y = element_text(size = 15, angle=0))
+zp1 <- zp1 + geom_tile()
+zp1 <- zp1 + scale_fill_gradientn(colours = myPalette(200), limits=c(-9, 7)) 
+zp1 <- zp1 + scale_y_discrete(breaks = sq)
+zp1 <- zp1 + scale_x_discrete(breaks = sq2)
+print(zp1)
+```
+
+## Estimate of functional coefficient $\widehat\gamma(s,t)$
+
+```{r gamma}
+gamma <- gf[[1]]$fit$gamma
+Functional_hours <- paste0("s_", 1 : SS)
+Longitudinal_time <- paste0("t_", 1 : J)
+sq <- Functional_hours[seq(1,length(Functional_hours), 10)]
+sq2 <- Longitudinal_time[seq(1,length(Longitudinal_time), 5)]
+Longitudinal_time <-  paste0("t_", 1:J)
+rownames(gamma) <- Functional_hours[1 : dim(gamma)[1]]   
+colnames(gamma) <- Longitudinal_time[1 : dim(gamma)[2]]   
+longData <- melt(gamma)
+names(longData) <- c("Functional_hours", "Longitudinal_time",  "value")
+longData$Longitudinal_time <- factor(longData$Longitudinal_time)
+longData$Functional_hours <- factor(longData$Functional_hours)
+myPalette <- colorRampPalette(brewer.pal(11, "Spectral"), space="rgb", bias = 1)
+zp1 <- ggplot(longData, aes(y = Functional_hours, x = Longitudinal_time, fill = value))
+zp1 <- zp1 + theme(text = element_text(size = 15), axis.text.x = 
+    element_text(size = 15, angle = 0), axis.text.y = element_text(size = 15, angle = 0))
+zp1 <- zp1 + geom_tile()
+zp1 <- zp1 + scale_fill_gradientn(colours = myPalette(200), limits=c(-9, 7)) 
+zp1 <- zp1 + scale_y_discrete(breaks = sq)
+zp1 <- zp1 + scale_x_discrete(breaks = sq2)
+print(zp1)
+```
+
+
+
